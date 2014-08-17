@@ -12,8 +12,24 @@ typedef struct {
 	byte pin;
 	byte level; // Current level
 	byte target; // Target level
-	long changeStart; // Time we started the change
-	int period; // Period of level change
+	unsigned long changeStartTime; // Time we started the change
+	unsigned long changeStartLevel; // Level prior to starting the change
+	unsigned long period; // Period of level change
 } LED;
+
+typedef struct {
+	byte pin;
+	unsigned long startPressed;
+	bool pressHandled;
+	unsigned long lastPress;
+} Button;
+
+typedef enum {
+	IDLE,
+	SET_ALARM_H,
+	SET_ALARM_M,
+	SET_TIME_H,
+	SET_TIME_M
+} State;
 
 #endif // _ALARMCLOCKV3_H_
