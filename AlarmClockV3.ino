@@ -6,7 +6,6 @@ void mon_handler();
 // *********************************************
 // Alarm LED toggling
 // *********************************************
-#define ALARM_HOUR 7
 #define RED_LED_PIN 3
 #define GREEN_LED_PIN 6
 #define BLUE_LED_PIN 5
@@ -22,6 +21,7 @@ void mon_handler();
 #define STATE_FADE_TIME 100
 #define TIME_FLASH_PERIOD 250
 #define LED_MAX 255
+#define MINUTE_DIVISOR 4
 
 #define ALARM_SET_BUTTON 0
 #define TIME_SET_BUTTON 1
@@ -30,10 +30,10 @@ void mon_handler();
 
 LED L[NUM_COLOURS] =
 	{
-		{RED_LED_PIN, 0, 0, 0, false, 0, true},
-		{GREEN_LED_PIN, 0, 0, 0, false, 0, true},
-		{BLUE_LED_PIN, 0, 0, 0, false, 0, true},
-		{STATUS_LED_PIN, 0, 0, 1000, true, -1, false}
+		{RED_LED_PIN, 0, 0, 0, 0, 0, false, 0, true},
+		{GREEN_LED_PIN, 0, 0, 0, 0, 0, false, 0, true},
+		{BLUE_LED_PIN, 0, 0, 0, 0, 0, false, 0, true},
+		{STATUS_LED_PIN, 0, 0, 0, 0, 1000, true, -1, false}
 	};
 
 Button B[2] =
@@ -63,9 +63,14 @@ void set_LED(Colour c, byte level, int period)
 
 void flash_LED(Colour c, byte level, unsigned long period, unsigned int count)
 {
-	L[c].flash = true;
+	if (count != 0) {
+		L[c].flash = true;
+		L[c].target = level;
+	} else {
+		L[c].flash = false;
+		L[c].target = 0;
+	}
 	L[c].level = 0;
-	L[c].target = level;
 	L[c].flashCount = count;
 	L[c].period = period;
 	L[c].changeStartTime = millis();
@@ -152,7 +157,6 @@ void updateLEDs(void)
 			// If we've overshot without hitting the exact target due to rounding or
 			// timing, fix it immediately.
 			if (now > l->changeStartTime + l->period) {
-				Serial.println(now);
 				l->level = l->target;
 				updateLED(l);
 				continue;
@@ -214,25 +218,28 @@ void setState(State newState)
 	state = newState;
 	switch (state) {
 		case IDLE:
-			saveAlarm(); // We've moved back to idle - save the alarm in case it's changed
 			set_LED(RED, 0, STATE_FADE_TIME);
 			set_LED(BLUE, 0, STATE_FADE_TIME);
 			break;
 		case SET_ALARM_H:
 			set_LED(RED, LED_MAX, STATE_FADE_TIME);
-			flash_LED(BLUE, LED_MAX, 300, alarm.h);
+			Serial.println(alarm.h);
+			flash_LED(BLUE, LED_MAX, TIME_FLASH_PERIOD, alarm.h);
 			break;
 		case SET_ALARM_M:
-			set_LED(RED, LED_MAX/2, STATE_FADE_TIME);
-			flash_LED(BLUE, LED_MAX/2, 300, alarm.m);
+			set_LED(RED, LED_MAX/MINUTE_DIVISOR, STATE_FADE_TIME);
+			Serial.println(alarm.m);
+			flash_LED(BLUE, LED_MAX/MINUTE_DIVISOR, TIME_FLASH_PERIOD, alarm.m / 10);
 			break;
 		case SET_TIME_H:
 			flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, RTC.hour);
+			Serial.println(RTC.hour);
 			set_LED(BLUE, LED_MAX, STATE_FADE_TIME);
 			break;
 		case SET_TIME_M:
-			flash_LED(RED, LED_MAX/2, TIME_FLASH_PERIOD, RTC.minute / 10);
-			set_LED(BLUE, LED_MAX/2, STATE_FADE_TIME);
+			flash_LED(RED, LED_MAX/MINUTE_DIVISOR, TIME_FLASH_PERIOD, RTC.minute / 10);
+			Serial.println(RTC.minute);
+			set_LED(BLUE, LED_MAX/MINUTE_DIVISOR, STATE_FADE_TIME);
 			break;
 	}
 	B[0].pressHandled = B[1].pressHandled = true;
@@ -275,8 +282,12 @@ void setAlarmHour()
 	if (checkRefreshState(SET_ALARM_H)) return;
 
 	if (checkAdjust()) {
+		Serial.println("Setting alarm hour");
 		if (++alarm.h > 23)
 			alarm.h = 0;
+		Serial.println(alarm.h);
+		flash_LED(BLUE, LED_MAX, TIME_FLASH_PERIOD, 1);
+		saveAlarm();
 		return;
 	}
 
@@ -288,8 +299,12 @@ void setAlarmMinute()
 	if (checkRefreshState(SET_ALARM_M)) return;
 
 	if (checkAdjust()) {
+		Serial.println("Setting alarm minuet");
 		if ((alarm.m += 10) > 50)
 			alarm.m = 0;
+		Serial.println(alarm.m);
+		flash_LED(BLUE, LED_MAX, TIME_FLASH_PERIOD, 1);
+		saveAlarm();
 		return;
 	}
 
@@ -301,9 +316,12 @@ void setTimeHour()
 	if (checkRefreshState(SET_TIME_H)) return;
 
 	if (checkAdjust()) {
+		Serial.println("Setting clock hour");
 		if (++RTC.hour > 23)
 			RTC.hour = 0;
 		RTC.setTime();
+		flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, 1);
+		Serial.println(RTC.hour);
 		return;
 	}
 
@@ -315,11 +333,14 @@ void setTimeMinute()
 	if (checkRefreshState(SET_TIME_M)) return;
 
 	if (checkAdjust()) {
+		Serial.println("Setting clock minute");
 		int over = RTC.minute % 10;
 		RTC.minute = (RTC.minute - over) + 10;
 		if (RTC.minute > 50)
 			RTC.minute = 0;
 		RTC.setTime();
+		flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, 1);
+		Serial.println(RTC.minute);
 		return;
 	}
 
@@ -333,10 +354,10 @@ void handleButtons()
 			idle();
 			break;
 		case SET_ALARM_H:
-			setAlarmMinute();
+			setAlarmHour();
 			break;
 		case SET_ALARM_M:
-			setAlarmHour();
+			setAlarmMinute();
 			break;
 		case SET_TIME_H:
 			setTimeHour();
