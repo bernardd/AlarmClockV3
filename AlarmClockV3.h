@@ -5,16 +5,20 @@ typedef enum {
 	RED = 0,
 	GREEN = 1,
 	BLUE = 2,
-	NUM_COLOURS = 3
+	STATUS = 3,
+	NUM_COLOURS = 4
 } Colour;
 
 typedef struct {
 	byte pin;
 	byte level; // Current level
-	byte target; // Target level
-	unsigned long changeStartTime; // Time we started the change
-	unsigned long changeStartLevel; // Level prior to starting the change
-	unsigned long period; // Period of level change
+	int target; // Target level
+	unsigned long changeStartTime; // Time we started the change or last time we toggled the flash
+	int changeStartLevel; // Level prior to starting the change
+	unsigned long period; // Period of level change or flash interval if we're flashing (light will be on for period then off for period)
+	bool flash;
+	int flashCount; // -1 to flash forever
+	bool isAnalog;
 } LED;
 
 typedef struct {
@@ -23,6 +27,11 @@ typedef struct {
 	bool pressHandled;
 	unsigned long lastPress;
 } Button;
+
+typedef struct {
+	byte h;
+	byte m;
+} Alarm;
 
 typedef enum {
 	IDLE,

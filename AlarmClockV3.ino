@@ -28,9 +28,10 @@ void mon_handler();
 
 LED L[NUM_COLOURS] =
 	{
-		{RED_LED_PIN, 0, 0, 0},
-		{GREEN_LED_PIN, 0, 0, 0},
-		{BLUE_LED_PIN, 0, 0, 0}
+		{RED_LED_PIN, 0, 0, 0, false, 0, true},
+		{GREEN_LED_PIN, 0, 0, 0, false, 0, true},
+		{BLUE_LED_PIN, 0, 0, 0, false, 0, true},
+		{STATUS_LED_PIN, 0, 0, 1000, true, -1, false}
 	};
 
 Button B[2] =
@@ -39,8 +40,17 @@ Button B[2] =
 		{SW_2_PIN, 0, false, 0}
 	};
 
+void updateLED(LED* l)
+{
+	if (l->isAnalog)
+		analogWrite(l->pin, l->level);
+	else
+		digitalWrite(l->pin, l->level);
+}
+
 void set_LED(Colour c, byte level, int period)
 {
+	L[c].flash = false;
 	if (L[c].target != level) {
 		L[c].target = level;
 		L[c].changeStartTime = millis();
@@ -49,91 +59,126 @@ void set_LED(Colour c, byte level, int period)
 	}
 }
 
+void flash_LED(Colour c, byte level, unsigned long period, unsigned int count)
+{
+	L[c].flash = true;
+	L[c].level = 0;
+	L[c].target = level;
+	L[c].flashCount = count;
+	L[c].period = period;
+	L[c].changeStartTime = millis();
+	updateLED(&L[c]);
+}
+
 State state = IDLE;
+
+Alarm alarm;
+
+unsigned int wrapHour(unsigned int h)
+{
+	while (h > 23) h -= 24;
+	return h;
+}
+unsigned int wrapMin(unsigned int m)
+{
+	while (m > 59) m -= 60;
+	return m;
+}
 
 // *********************************************
 // SETUP
 // *********************************************
 void setup()
 {
+	Serial.begin(9600);
 	// Wait a second for the clock to get itself together
 	delay(1000);
 
 	// LEDs
 	for (int i=0; i<NUM_COLOURS; i++) {
 		pinMode(L[i].pin, OUTPUT);
-		analogWrite(L[i].pin, 0);
+		updateLED(&L[i]);
 	}
 
-	pinMode(STATUS_LED_PIN, OUTPUT);
-	digitalWrite(STATUS_LED_PIN, 0);
+	if ( !RTC.isPresent() )
+		flash_LED(STATUS, 1, 100, -1);                // fast flashing if device is not available
+	else
+		flash_LED(STATUS, 1, 1000, -1);
 
+	Serial.println("Status LED flashing setup");
 	// Switches
 	pinMode(SW_1_PIN, INPUT_PULLUP);
 	pinMode(SW_2_PIN, INPUT_PULLUP);
 	pinMode(SW_GND_PIN, OUTPUT);
 	digitalWrite(SW_GND_PIN, 0);
 
+	// Load saved alarm time
+	loadAlarm();
+
 	// Serial
-	Serial.begin(9600);
 	Serial.println("DS1307 Monitor (enable LF/CR, type 'h' for help)");
 	Serial.println();
 }
 
-// *********************************************
-// Status LED flashing
-// *********************************************
-uint8_t LED_state = 0;
-uint32_t LED_next_change = 0L;
-uint32_t LED_on_time = 100L;
-uint32_t LED_off_time = 1000L;
-
-void flashStatusLED()
-{
-	// Status LED
-	if ( LED_next_change < millis() )
-	{
-		if ( LED_state == 0 )
-		{
-			LED_next_change = millis() + LED_on_time;
-			LED_state = 1;
-		}
-		else
-		{
-			LED_next_change = millis() + LED_off_time;
-			LED_state = 0;
-		}
-		digitalWrite(STATUS_LED_PIN, LED_state);
-	}
-}
-
 void updateLEDs(void)
 {
-	flashStatusLED();
-
 	unsigned long now = millis();
 	for (int i=0; i<NUM_COLOURS; i++) {
 		LED *l = &L[i];
-		if (l->target == l->level)
-			continue;
 
-		// If we've overshot without hitting the exact target due to rounding or
-		// timing, fix it immediately.
-		if (l->changeStartTime + l->period > now) {
-			l->level = l->target;
-			analogWrite(l->pin, l->level);
-			continue;
+		if (l->flash) {
+			if (l->changeStartTime + l->period > millis())
+				continue;
+
+			l->changeStartTime += l->period;
+			if (l->level == l->target) {
+				l->level = 0;
+				if (l->flashCount != -1 && --(l->flashCount) == 0)
+					l->flash = false;
+			}
+			else
+				l->level = l->target;
+
+			updateLED(l);
+
+		} else {
+			if (l->target == l->level)
+				continue;
+
+			// If we've overshot without hitting the exact target due to rounding or
+			// timing, fix it immediately.
+			if (now > l->changeStartTime + l->period) {
+				Serial.println(now);
+				l->level = l->target;
+				updateLED(l);
+				continue;
+			}
+
+			long change = l->target - l->changeStartLevel;
+			long level = l->changeStartLevel + (long)((float)change * ((float)(now - l->changeStartTime) / (float)l->period));
+			l->level = constrain(level, 0, LED_MAX);
+			updateLED(l);
 		}
-
-		long change = l->target - l->changeStartLevel;
-		long level = l->changeStartLevel + (change * ((float)l->period / (float)(now - l->changeStartTime)));
-		l->level = constrain(level, 0, LED_MAX);
-		analogWrite(l->pin, l->level);
 	}
 }
 
 // *********************************************
-// Buttons
+// Buttons/State
+// *********************************************
+
+void saveAlarm()
+{
+  RTC.setRAM(0, (uint8_t *)&alarm, sizeof(alarm));
+}
+
+void loadAlarm()
+{
+  RTC.getRAM(0, (uint8_t *)&alarm, sizeof(alarm));
+}
+
+
+// *********************************************
+// Buttons/State
 // *********************************************
 
 void updateButton(byte index)
@@ -228,9 +273,6 @@ void handleButtons()
 // *********************************************
 void loop()
 {
-	if ( !RTC.isPresent() )
-		LED_off_time = 100L;                // fast flashing if device is not available
-
 	updateLEDs();
 
 	if ( Serial.available() )
@@ -238,9 +280,10 @@ void loop()
 
 	// Actual alarm clock bit:
 	RTC.getTime();
-	if (RTC.hour == ALARM_HOUR)
+	if ((RTC.hour == alarm.h && RTC.minute >= alarm.m) ||
+		 (RTC.hour == wrapHour(alarm.h+1) && RTC.minute < alarm.m))
 		set_LED(ALARM, LED_MAX, ALARM_TOGGLE_TIME);
-	else if (RTC.hour != ALARM_HOUR)
+	else
 		set_LED(ALARM, 0, ALARM_TOGGLE_TIME);
 
 	for (int i=0; i<2; i++)
