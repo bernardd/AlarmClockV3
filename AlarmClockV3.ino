@@ -16,9 +16,11 @@ void mon_handler();
 #define SW_2_PIN 16
 #define SW_GND_PIN 17
 
+#define STD_PRESS_TIME 300
 #define SET_TOGGLE_TIME 2000
 #define ALARM_TOGGLE_TIME 2000
 #define STATE_FADE_TIME 100
+#define TIME_FLASH_PERIOD 250
 #define LED_MAX 255
 
 #define ALARM_SET_BUTTON 0
@@ -133,11 +135,13 @@ void updateLEDs(void)
 			l->changeStartTime += l->period;
 			if (l->level == l->target) {
 				l->level = 0;
-				if (l->flashCount != -1 && --(l->flashCount) == 0)
+				if (l->flashCount != -1 && --(l->flashCount) == 0) {
+					l->target = 0;
 					l->flash = false;
-			}
-			else
+				}
+			} else {
 				l->level = l->target;
+			}
 
 			updateLED(l);
 
@@ -205,24 +209,57 @@ unsigned long timePressed(byte index)
 
 void setState(State newState)
 {
+	Serial.print("New State: ");
+	Serial.println(newState);
 	state = newState;
 	switch (state) {
 		case IDLE:
+			saveAlarm(); // We've moved back to idle - save the alarm in case it's changed
 			set_LED(RED, 0, STATE_FADE_TIME);
 			set_LED(BLUE, 0, STATE_FADE_TIME);
 			break;
 		case SET_ALARM_H:
-		case SET_ALARM_M:
 			set_LED(RED, LED_MAX, STATE_FADE_TIME);
-			set_LED(BLUE, 0, STATE_FADE_TIME);
+			flash_LED(BLUE, LED_MAX, 300, alarm.h);
+			break;
+		case SET_ALARM_M:
+			set_LED(RED, LED_MAX/2, STATE_FADE_TIME);
+			flash_LED(BLUE, LED_MAX/2, 300, alarm.m);
 			break;
 		case SET_TIME_H:
-		case SET_TIME_M:
-			set_LED(RED, 0, STATE_FADE_TIME);
+			flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, RTC.hour);
 			set_LED(BLUE, LED_MAX, STATE_FADE_TIME);
+			break;
+		case SET_TIME_M:
+			flash_LED(RED, LED_MAX/2, TIME_FLASH_PERIOD, RTC.minute / 10);
+			set_LED(BLUE, LED_MAX/2, STATE_FADE_TIME);
 			break;
 	}
 	B[0].pressHandled = B[1].pressHandled = true;
+}
+
+void checkNextState(State nextState)
+{
+	if (timePressed(TIME_SET_BUTTON) > STD_PRESS_TIME && timePressed(ALARM_SET_BUTTON) == 0)
+		setState(nextState);
+}
+
+bool checkAdjust()
+{
+	if (timePressed(ALARM_SET_BUTTON) > STD_PRESS_TIME && timePressed(TIME_SET_BUTTON) == 0) {
+		B[0].pressHandled = B[1].pressHandled = true;
+		return true;
+	}
+	return false;
+}
+
+bool checkRefreshState(State thisState)
+{
+	if (timePressed(ALARM_SET_BUTTON) > SET_TOGGLE_TIME && timePressed(TIME_SET_BUTTON) > SET_TOGGLE_TIME) {
+		setState(thisState);
+		return true;
+	}
+	return false;
 }
 
 void idle()
@@ -233,22 +270,60 @@ void idle()
 		setState(SET_TIME_H);
 }
 
-void setAlarm()
+void setAlarmHour()
 {
-	if (timePressed(ALARM_SET_BUTTON) > ALARM_TOGGLE_TIME && timePressed(TIME_SET_BUTTON) > ALARM_TOGGLE_TIME) {
-		setState(IDLE);
+	if (checkRefreshState(SET_ALARM_H)) return;
+
+	if (checkAdjust()) {
+		if (++alarm.h > 23)
+			alarm.h = 0;
 		return;
 	}
 
+	checkNextState(SET_ALARM_M);
 }
 
-void setTime()
+void setAlarmMinute()
 {
-	if (timePressed(ALARM_SET_BUTTON) > ALARM_TOGGLE_TIME && timePressed(TIME_SET_BUTTON) > ALARM_TOGGLE_TIME) {
-		setState(IDLE);
+	if (checkRefreshState(SET_ALARM_M)) return;
+
+	if (checkAdjust()) {
+		if ((alarm.m += 10) > 50)
+			alarm.m = 0;
 		return;
 	}
 
+	checkNextState(IDLE);
+}
+
+void setTimeHour()
+{
+	if (checkRefreshState(SET_TIME_H)) return;
+
+	if (checkAdjust()) {
+		if (++RTC.hour > 23)
+			RTC.hour = 0;
+		RTC.setTime();
+		return;
+	}
+
+	checkNextState(SET_TIME_M);
+}
+
+void setTimeMinute()
+{
+	if (checkRefreshState(SET_TIME_M)) return;
+
+	if (checkAdjust()) {
+		int over = RTC.minute % 10;
+		RTC.minute = (RTC.minute - over) + 10;
+		if (RTC.minute > 50)
+			RTC.minute = 0;
+		RTC.setTime();
+		return;
+	}
+
+	checkNextState(IDLE);
 }
 
 void handleButtons()
@@ -258,12 +333,16 @@ void handleButtons()
 			idle();
 			break;
 		case SET_ALARM_H:
+			setAlarmMinute();
+			break;
 		case SET_ALARM_M:
-			setAlarm();
+			setAlarmHour();
 			break;
 		case SET_TIME_H:
+			setTimeHour();
+			break;
 		case SET_TIME_M:
-			setTime();
+			setTimeMinute();
 			break;
 	}
 }
