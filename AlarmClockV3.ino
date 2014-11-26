@@ -112,7 +112,6 @@ void setup()
 	else
 		flash_LED(STATUS, 1, 1000, -1);
 
-	Serial.println("Status LED flashing setup");
 	// Switches
 	pinMode(SW_1_PIN, INPUT_PULLUP);
 	pinMode(SW_2_PIN, INPUT_PULLUP);
@@ -282,7 +281,7 @@ void setAlarmHour()
 	if (checkRefreshState(SET_ALARM_H)) return;
 
 	if (checkAdjust()) {
-		Serial.println("Setting alarm hour");
+		Serial.print("Setting alarm hour ");
 		if (++alarm.h > 23)
 			alarm.h = 0;
 		Serial.println(alarm.h);
@@ -299,7 +298,7 @@ void setAlarmMinute()
 	if (checkRefreshState(SET_ALARM_M)) return;
 
 	if (checkAdjust()) {
-		Serial.println("Setting alarm minuet");
+		Serial.print("Setting alarm minute ");
 		if ((alarm.m += 10) > 50)
 			alarm.m = 0;
 		Serial.println(alarm.m);
@@ -311,15 +310,22 @@ void setAlarmMinute()
 	checkNextState(IDLE);
 }
 
+void writeTime()
+{
+	RTC.setTime();
+	RTC.startClock();
+	RTC.getTime();
+}
+
 void setTimeHour()
 {
 	if (checkRefreshState(SET_TIME_H)) return;
 
 	if (checkAdjust()) {
-		Serial.println("Setting clock hour");
+		Serial.print("Setting clock hour ");
 		if (++RTC.hour > 23)
 			RTC.hour = 0;
-		RTC.setTime();
+		writeTime();
 		flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, 1);
 		Serial.println(RTC.hour);
 		return;
@@ -333,12 +339,12 @@ void setTimeMinute()
 	if (checkRefreshState(SET_TIME_M)) return;
 
 	if (checkAdjust()) {
-		Serial.println("Setting clock minute");
+		Serial.print("Setting clock minute ");
 		int over = RTC.minute % 10;
 		RTC.minute = (RTC.minute - over) + 10;
 		if (RTC.minute > 50)
 			RTC.minute = 0;
-		RTC.setTime();
+		writeTime();
 		flash_LED(RED, LED_MAX, TIME_FLASH_PERIOD, 1);
 		Serial.println(RTC.minute);
 		return;
@@ -385,6 +391,7 @@ void loop()
 		set_LED(ALARM, LED_MAX, ALARM_TOGGLE_TIME);
 	else
 		set_LED(ALARM, 0, ALARM_TOGGLE_TIME);
+
 
 	for (int i=0; i<2; i++)
 		updateButton(i);

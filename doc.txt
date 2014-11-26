@@ -1,0 +1,10 @@
+RED: Set ALARM
+BLUE: Set TIME
+
+Dot: Set ALARM
+
+Time button: advance state
+Both buttons: flash current setting
+Alarm button: advance by 1 hour/10 minutes
+
+IDLE -> Set Hour -> Set Minute -> Idle
